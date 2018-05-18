@@ -1,14 +1,14 @@
-## Introduction
+## 序言
 
-The purpose of this document is to provide a reasonably complete specification and introduction for anyone looking to understand the details of the sharding proposal, as well as to implement it. This document as written describes only "phase 1" of quadratic sharding; [phases 2, 3 and 4](https://github.com/ethereum/sharding/blob/develop/docs/doc.md#subsequent-phases) are at this point out of scope, and super-quadratic sharding ("Ethereum 3.0") is also out of scope.
+本文的目的是为那些希望理解分片建议详情，乃至去实现它的朋友提供一份相对完整的细节说明和介绍。本文仅作为二次方分片（quadratic sharding）的第一阶段的描述；第二、三、四阶段目前不在讨论范围，同样，超级二次方分片（super-quadratic sharding）*（“Ethereum 3.0”）* 也不在讨论范围。
 
-Suppose that the variable `c` denotes the level of computational power available to one node. In a simple blockchain, the transaction capacity is bounded by O(c), as every node must process every transaction. The goal of quadratic sharding is to increase the capacity with a two-layer design. Stage 1 requires no hard forks; the main chain stays exactly as is. However, a contract is published to the main chain called the **validator manager contract** (VMC), which maintains the sharding system. There are O(c) **shards** (currently, 100), where each shard is like a separate "galaxy": it has its own account space, transactions need to specify which shard they are to be published inside, and communication between shards is very limited (in fact, in phase 1, it is nonexistent).
+假设用变量 `c` 来表示一个节点的有效计算能力，那么在一个普通的区块链里，交易容量就被限定为 O(c)，因为每个节点都必须处理所有的交易。二次方分片的目的，就是通过一种双层的设计来增加交易容量。在第一层中是不需要硬分叉的，主链就保持原样。不过，一种被称为**校验器管理和约**（validator manager contract，VMC）的合约需要被发布到主链上，它用来维持分片系统。这个合约中会存在 O(c) 个 **分片** （目前为100），每个分片都像是个独立的“银河”：它具有自己的账户空间，交易需要指定它们自己应该被发布到哪个分片中，并且分片间的通信是受限的（事实上，在第一阶段，不存在这种通信能力）。
 
-The shards are run on a simple longest-chain-rule proof of stake system, where the stake is on the main chain (specifically, inside the VMC). All shards share a common validator pool; this also means that anyone who signs up with the VMC as a validator could theoretically at any time be assigned the right to create a block on any shard. Each shard has a block size/gas limit of O(c), and so the total capacity of the system is O(c^2).
+分片运行在一个普通的符合最长链规则的权益证明系统中，权益数据将保存在主链上（具体来说，是在VMC中）。所有分片共享一个通用验证器池，这也意味着：任何通过VMC注册的验证器，理论上都可以在任意时间被授权来在任意分片上创建区块。每个分片会有一个 O(c) 的区块大小/气上限（block size/gas limit），这样，系统的整体容量就变成了 O(c^2) 。
 
-Most users of the sharding system will run both (i) either a full (O(c) resource requirements) or light (O(log(c)) resource requirements) node on the main chain, and (ii) a "shard client" which talks to the main chain node via RPC (this client is assumed to be trusted because it's also running on the user's computer) and which can also be used as a light client for any shard, as a full client for any specific shard (the user would have to specify that they are "watching" a specific shard) or as a validator node. In all cases, the storage and computation requirements for a shard client will also not exceed O(c) (unless the user chooses to specify that they are watching _every_ shard; block explorers and large exchanges may want to do this).
+分片系统中的大多数用户都会运行两部分程序。(i) 一个在主链上的全节点（需要 O(c) 资源）或轻量节点（需要 O(log(c)) 资源）。 (ii) 一个通过RPC与主链交互的“分片客户端”（由于这个客户端同样运行在当前用户的计算机中，所以它被认为是可信的）；它也可以作为任意分片的轻客户端、作为特定分片的全客户端（用户需要指定他们正在“监视”某个特定的分片），或者作为一个验证器节点。在这些情况下，一个分片客户端的存储和计算需求也将不会超过 O(c)  （除非用户指定他们正在监视 _每个_ 分片；区块浏览器和大型的交易所可能会这么做）。
 
-In this document, the term `Collation` is used to differentiate from `Block` because (i) they are different RLP objects: transactions are level 0 objects, collations are level 1 objects that package transactions, and blocks are level 2 objects that package collation (headers); (ii) it’s clearer in context of sharding. Basically, `Collation` must consist of `CollationHeader` and `TransactionList`; `Witness` and the detailed format of `Collation` will be defined in **Stateless clients** section. `Collator` is the collation proposer sampled by `getEligibleProposer` function of **Validator Manager Contract** in the main chain; the mechanism will be introduced in the following sections.
+在本文中， `Collation` （校对块）被用来与 `Block` （区块）相区别，因为： (i) 它们是不同的RLP（Recursive Length Prefix）对象：交易是第0层的对象，collation是用来打包交易的第一层的对象，而block则是用来打包collation（header）的第二层的对象； (ii) 在分片的情景中这更加清晰。通常， `Collation` 必须由 `CollationHeader` （校对块头）和 `TransactionList` （交易列表）组成； `Collation` 的详细格式和 `Witness` （见证人）会在 **无状态客户端** 那节定义。 `Collator` （校对器）是由主链上 **验证器管理合约** 的 `getEligibleProposer` 函数所生成的示例。算法会在随后的章节中介绍。
 
 | Main Chain                                 | Shard Chain            |
 |--------------------------------------------|------------------------|
@@ -16,9 +16,9 @@ In this document, the term `Collation` is used to differentiate from `Block` bec
 | BlockHeader                                | CollationHeader        |
 | Block Proposer (or `Miner` in PoW chain)   | Collator               |
 
-## Quadratic sharding
+## 二次方分片（Quadratic Sharding）
 
-### Constants
+### 常量
 
 * `LOOKAHEAD_PERIODS`: 4
 * `PERIOD_LENGTH`: 5
@@ -27,17 +27,17 @@ In this document, the term `Collation` is used to differentiate from `Block` bec
 * `SIG_GASLIMIT`: 40000 gas
 * `COLLATOR_REWARD`: 0.001 ETH
 
-### Validator Manager Contract (VMC)
+### 验证器管理合约（Validator Manager Contract，VMC）
 
-We assume that at address `VALIDATOR_MANAGER_ADDRESS` (on the existing "main shard") there exists the VMC, which supports the following functions:
+我们假定VMC存在于地址 `VALIDATOR_MANAGER_ADDRESS` 上（在已有的“主分片”上），它支持下列函数：
 
--   `deposit() returns uint256`: adds a validator to the validator set, with the validator's size being the `msg.value` (i.e., the amount of ETH deposited) in the function call. This function returns the validator index.
--   `withdraw(uint256 validator_index) returns bool`: verifies that `msg.sender == validators[validator_index].addr`. if it is removes the validator from the validator set and refunds the deposited ETH.
--   `get_eligible_proposer(uint256 shard_id, uint256 period) returns address`: uses a block hash as a seed to pseudorandomly select a signer from the validator set. The chance of being selected should be proportional to the validator's deposit. The function should be able to return a value for the current period or any future up to `LOOKAHEAD_PERIODS` periods ahead.
--   `add_header(uint256 shard_id, uint256 expected_period_number, bytes32 period_start_prevhash, bytes32 parent_hash, bytes32 transaction_root, address coinbase, bytes32 state_root, bytes32 receipt_root, uint256 number) returns bool`: attempts to process a collation header, returns True on success, reverts on failure.
--   `get_shard_head(uint256 shard_id) returns bytes32`: returns the header hash that is the head of a given shard as perceived by the manager contract.
+- `deposit(address validationCodeAddr, address returnAddr) returns uint256` ：添加一个验证器到验证器集合中，验证器的大小就是函数调用时的 `msg.value` （比如存入的以太币数量）。这个函数会返回验证器的索引号。 `validationCodeAddr` 用来存储验证代码的地址，这里的“验证代码”指一个单纯的函数，这个函数需要一个32字节的哈希值和一个签名作为输入，如果签名与哈希值匹配则返回1，否则返回0。如果validationCodeAddr这个地址存储的代码不能通过 [单纯性检查合约] 的单纯性验证，deposit函数就会失败。这里的“单纯性验证”包含了对“验证代码”的实际的静态检查以确保它的输出仅仅依赖于它的输入，而不会受任何状态的影响；它的代码没有使用任何会影响状态的操作码（opcode）；并且它的运行也不会导致状态的变动（比如，来防止攻击者创建这样的恶意“验证代码”：当用它校验投票表决时返回true，但当验证器行为不端、甚至已经有行为不端者的证据被提供给这个函数时，它又返回false）。
+- `withdraw(uint256 validatorIndex, bytes sig) returns bool` ：校验签名的正确性（例如，一个以0值和 `sha3("withdraw") + sig` 作为数据，附带了200000个气的，对 `validationCodeAddr` 的调用返回1），如果正确，它会将验证器从验证器集合中移除，并退还存入的以太币。
+- `getEligibleProposer(uint256 shardId, uint256 period) returns address` ：使用一个区块哈希（block hash）作为种子基于预设的算法从验证器集合中选择一个签名者（signer）。验证器被选中几率应该与其存款数量成正比。这个函数应该可以返回一个当前周期内的值或者以 `LOOKAHEAD_PERIODS` 为上限的任意未来周期内的值。
+- `addHeader(bytes header) returns bool` ：尝试处理一个collation header，成功时返回true，失败时返回false。
+- `getShardHead(uint256 shardId) returns bytes32` ：返回验证器管理合约内由参数所指定的分片的header哈希。
 
-There is also one log type:
+这里也有一个日志类型：
 
 -   `CollationAdded(indexed uint256 shard_id, bytes collation_header_bytes, bool is_new_head, uint256 score)`
 
@@ -59,9 +59,9 @@ where `collation_header_bytes` can be constructed in vyper by
 
 Note: `coinbase` and `number` are renamed to `collation_coinbase` and `collation_number`, due to the fact that they are reserved keywords in vyper.
 
-### Collation header
+### 校对块头（Collation Header）
 
-We first define a "collation header" as an RLP list with the following values:
+我们首先以一个有下列内容的RLP列表来定义一个“collation header”：
 
     [
         shard_id: uint256,
@@ -75,37 +75,36 @@ We first define a "collation header" as an RLP list with the following values:
         number: uint256,
     ]
 
-Where:
+这里：
 
--   `shard_id` is the shard ID of the shard;
--   `expected_period_number` is the period number in which this collation expects to be included; this is calculated as `period_number = floor(block.number / PERIOD_LENGTH)`;
--   `period_start_prevhash` is the block hash of block `PERIOD_LENGTH * expected_period_number - 1` (i.e., it is the hash of the last block before the expected period starts). Opcodes in the shard that refer to block data (e.g. NUMBER and DIFFICULTY) will refer to the data of this block, with the exception of COINBASE, which will refer to the shard coinbase;
--   `parent_hash` is the hash of the parent collation;
--   `transaction_root` is the root hash of the trie holding the transactions included in this collation;
--   `state_root` is the new state root of the shard after this collation;
--   `receipt_root` is the root hash of the receipt trie;
--   `number` is the collation number, which is also the score for the fork choice rule now; and
+- `shard_id` 分片的ID；
+- `expected_period_number` 是collation希望被包含进的周期序号，这是由 `period_number = floor(block.number / PERIOD_LENGTH)` 计算出来的；
+- `period_start_prevhash` 前一区块，即区块 `PERIOD_LENGTH * expected_period_number - 1` 的区块哈希（这其实就是希望被包含进的周期起始区块之前的最后一个区块的哈希）。分片中使用区块数据的操作码（例如NUMBER和DIFFICULTY）会使用这个区块的数据，除了COINBASE操作码，它会使用分片的coinbase；
+- `parent_collation_hash` 是父collation的哈希；
+- `tx_list_root` 是包含在当前collation中的交易数据的查找树（trie）根哈希；
+- `post_state_root` 是分片中当前collation之后的新状态根；
+- `receipts_root` 是收据查找树（receipt trie）根哈希；
+- `sig` 是一个签名。
 
-A **collation header** is valid if calling `add_header(shard_id, expected_period_number, period_start_prevhash, parent_hash, transaction_root, coinbase, state_root, receipt_root, number)` returns true. The validator manager contract should do this if:
+当 `addHeader(header)` 的调用返回true时， **collation header** 有效。验证器管理合约会在满足下列条件时这么做：
 
--   the `shard_id` is at least 0, and less than `SHARD_COUNT`;
--   the `expected_period_number` equals the actual current period number (i.e., `floor(block.number / PERIOD_LENGTH)`)
--   a collation with the hash `parent_hash` for the same shard has already been accepted;
--   a collation for the same shard has not yet been submitted during the current period;
--   the address of the sender of `add_header` is equal to the address returned by `get_eligible_proposer(shard_id, expected_period_number)`.
+- `shard_id` 是0到 `SHARD_COUNT` 之间的数值；
+- `expected_period_number` 与当前周期号相等（比如  `floor(block.number / PERIOD_LENGTH)` ）
+- 一个具有相同的分片 `parent_collation_hash` 的collation已经被接受；并且
+- `sig` 是一个有效的签名。就是说，如果我们计算 `validation_code_addr = getEligibleProposer(shard_id, current_period)` ，然后使用 `sha3(shortened_header) ++ sig` （这里的 `shortened_header`  是“collation header” _去掉_ sig之后的RLP编码格式）来调用 `validation_code_addr` 的话，调用结果应该为1。
 
-A **collation** is valid if: (i) its collation header is valid; (ii) executing the collation on top of the `parent_hash`'s `state_root` results in the given `state_root` and `receipt_root`; and (iii) the total gas used is less than or equal to `COLLATION_GASLIMIT`.
+当满足以下条件时， **collation** 有效： (i) 它的“collation header”有效； (ii)  在 `parent_collation_hash` 的 `post_state_root` 上执行collation的结果为给定的 `post_state_root` 和 `receipts_root` ；并且 (iii) 总共使用的气（gas）小于等于 `COLLATION_GASLIMIT` 。
 
-### Collation state transition function
+### Collation状态转换函数
 
-The state transition process for executing a collation is as follows:
+执行一个collation时的状态转换处理如下：
 
-* execute each transaction in the tree pointed to by `transaction_root` in order; and
-* assign a reward of `COLLATOR_REWARD` to the coinbase.
+* 按顺序执行由 `tx_list_root` 所指定的树上的每个交易；并且
+* 将 `COLLATOR_REWARD` 的奖励分配给coinbase。
 
-### Details of `getEligibleProposer`
+### `getEligibleProposer` 的细节
 
-Here is one simple implementation in Viper:
+这里是用Viper写的一个简单实现：
 
 ```python
 def getEligibleProposer(shardId: num, period: num) -> address:
@@ -131,19 +130,19 @@ def getEligibleProposer(shardId: num, period: num) -> address:
     ].addr
 ```
 
-## Stateless clients
+## 无状态客户端（Stateless Clients）
 
-A validator is only given a few minutes' notice (precisely, `LOOKAHEAD_PERIODS * PERIOD_LENGTH` blocks worth of notice) when they are asked to create a block on a given shard. In Ethereum 1.0, creating a block requires having access to the entire state in order to validate transactions. Here, our goal is to avoid requiring validators to store the state of the entire system (as that would be an O(c^2) computational resource requirement). Instead, we allow validators to create collations knowing only the state root, pushing the responsibility onto transaction senders to provide "witness data" (i.e., Merkle branches), to prove the pre-state of the accounts that the transaction affects, and to provide enough information to calculate the post-state root after executing the transaction.
+当验证器被要求在一个给定的分片上创建区块时，一个验证器仅会被给予数分钟的通知（准确地说，就是持续 `LOOKAHEAD_PERIODS * PERIOD_LENGTH` 个区块的通知）。在Ethereum 1.0中，创建一个区块需要为验证交易而访问全部的状态。这里，我们的目标是避免需要验证器保留整个系统的状态（因为这样就将使运算资源需求变为 O(c^2) 了）。取而代之，我们允许验证器在仅知晓根状态（state root）的情况下创建collation，而将其他责任交给交易发送者，由他们提供“见证数据”（witness data），例如Merkle分支，以此来验证交易对账户产生影响的“前状态”（pre-state），并提供足够的信息来计算交易执行后的“后状态根”（post-state root）。
 
-(Note that it's theoretically possible to implement sharding in a non-stateless paradigm; however, this requires: (i) storage rent to keep storage size bounded; and (ii) validators to be assigned to create blocks in a single shard for O(c) time. This scheme avoids the need for these sacrifices.)
+（应该注意到，使用非无状态范式（non-stateless paradigm）来实现分片，理论上是可能的；然而，这需要： (i) 租用存储空间来保持存储的有界性；并且 (ii) 验证器需要使用 O(c) 的时间在一个分片中创建区块。上述方案避免了对这些牺牲的需求。）
 
-### Data format
+### 数据格式
 
-We modify the format of a transaction so that the transaction must specify an **access list** enumerating the parts of the state that it can access (we describe this more precisely later; for now consider this informally as a list of addresses). Any attempt to read or write to any state outside of a transaction's specified access list during VM execution returns an error. This prevents attacks where someone sends a transaction that spends 5 million cycles of gas on random execution, then attempts to access a random account for which the transaction sender and the collator do not have a witness, preventing the collator from including the transaction and thereby wasting the collator's time.
+我们修改了交易的格式，以使交易必须指定一个 **访问列表** 来列举出它可以访问的状态（后边我们会更精确的描述这点，这里不妨把它想象为是一个地址列表）。任何在VM执行过程中试图读写交易所指定的访问列表以外的状态，都会返回一个错误。这可以防止这样的攻击：某人发送了一个消耗5百万气的随机执行，然后试图访问一个交易发送者和collator都没有见证人的随机账户；可以防止collator包含进像这样浪费collator时间的交易。
 
-_Outside_ of the signed body of the transaction, but packaged along with the transaction, the transaction sender must specify a "witness", an RLP-encoded list of Merkle tree nodes that provides the portions of the state that the transaction specifies in its access list. This allows the collator to process the transaction with only the state root. When publishing the collation, the collator also sends a witness for the entire collation.
+交易发送者必须指定“见证人”（witness），这在被签名的交易体 _之外_ ，但也被打包进交易。这里的见证人是一个Merkle树节点的RLP编码的列表（RLP-encoded list），它是由交易在其访问列表中所指定的状态的组成部分。这使collator仅使用状态根就可以处理交易。在发布collation的时候，collator也会发送整个collation的见证人。
 
-#### Transaction package format
+#### 交易打包格式
 
 ```python
     [
@@ -152,7 +151,7 @@ _Outside_ of the signed body of the transaction, but packaged along with the tra
     ]
 ```
 
-#### Collation format
+#### Collation格式
 
 ```python
     [
@@ -162,27 +161,27 @@ _Outside_ of the signed body of the transaction, but packaged along with the tra
     ]
 ```
 
-See also ethresearch thread on [The Stateless Client Concept](https://ethresear.ch/t/the-stateless-client-concept/172).
+也请参考 ethresearch 上的帖子 [无状态客户端的概念](https://ethresear.ch/t/the-stateless-client-concept/172) 。
 
-### Stateless client state transition function
+### 无状态客户端状态转换函数
 
-In general, we can describe a traditional "stateful" client as executing a state transition function `stf(state, tx) -> state'` (or `stf(state, block) -> state'`). In a stateless client model, nodes do not store the state. The functions `apply_transaction` and `apply_block` can be rewritten as follows:
+通常，我们可以将传统的“有状态”客户端执行状态转换的函数描述为：  `stf(state, tx) -> state'` （或 `stf(state, block) -> state'` ）。在无状态客户端模型中，节点不保存状态，所以 `apply_transaction` 和 `apply_block` 可以写为：
 
 ```python
 apply_block(state_obj, witness, block) -> state_obj', reads, writes
 ```
 
-Where `state_obj` is a tuple containing the state root and other O(1)-sized state data (gas used, receipts, bloom filter, etc); `witness` is a witness; and `block` is the rest of the block. The returned output is:
+这里， `state_obj` 是一个数据元组，包含了状态根和其他 O(1) 大小的状态数据（使用的气、receipts、bloom filter等等）； `witness` 就是见证人； `block` 就是区块的余下部分。其返回的输出是：
 
-* a new `state_obj` containing the new state root and other variables;
-* the set of objects from the witness that have been read (which is useful for block creation); and
-* the set of new state objects that have been created to form the new state trie.
+* 一个新的 `state_obj` 包含了新的状态根和其他变量；
+* 从见证人那里读取的对象集合（用于区块创建）；和
+* 为了组成新的状态查找树而被创建的一组新的状态对象。
 
-This allows the functions to be "pure", as well as only dealing with small-sized objects (as opposed to the state in existing Ethereum, which is currently [hundreds of gigabytes](https://etherscan.io/chart/chaindatasizefull)), making them convenient to use for sharding.
+这使得函数是“单纯性的”（pure），仅处理小尺寸对象（small-sized objects）（相反的例子就是现行的以太坊状态数据，现在已经 [数百G字节](https://etherscan.io/chart/chaindatasizefull) ），从而使他们可以方便地在分片中使用。
 
-### Client logic
+### 客户端逻辑
 
-A client would have a config of the following form:
+一个客户端应该有一个如下格式的配置：
 
 ```python
 {
@@ -192,13 +191,13 @@ A client would have a config of the following form:
 }
 ```
 
-If a validator address is provided, then it checks (on the main chain) if the address is an active validator. If it is, then every time a new period on the main chain starts (i.e., when `floor(block.number / PERIOD_LENGTH)` changes), then it should call `getEligibleProposer` for all shards for period `floor(block.number / PERIOD_LENGTH) + LOOKAHEAD_PERIODS`. If it returns the validator's address for some shard `i`, then it runs the algorithm `CREATE_COLLATION(i)` (see below).
+如果指定了validator地址，那么客户端会在主链上检查这个地址是否是有效的validator。如果是，那么在每次在主链上开始一个新周期时（例如，当  `floor(block.number / PERIOD_LENGTH)` 变化的时候），客户端将为所有分片的周期 `floor(block.number / PERIOD_LENGTH) + LOOKAHEAD_PERIODS` 调用  `getEligibleProposer` 。如果这个调用返回了某个分片 `i` 的验证器地址，客户端会运行算法 `CREATE_COLLATION(i)` （参考下文）。
 
-For every shard `i` in the `watching` list, every time a new collation header appears in the main chain, it downloads the full collation from the shard network, and verifies it. It locally keeps track of all valid headers (where validity is defined recursively, i.e., for a header to be valid its parent must also be valid), and accepts as the main shard chain the shard chain whose head has the highest score, and where all collations from the genesis collation to the head are valid and available. Note that this implies the reorgs of the main chain *and* reorgs of the shard chain may both influence the shard head.
+对于 `watching` 列表中的每个分片 `i` ，每当一个新collation header出现在主链上，它就会从分片网络中下载完整的collation，并对其进行校验。它将内部保持追踪所有有效的header（这里的有效性是回溯的，例如，一个header如果是有效的，那么他的父header也应该是有效的），并且将head具有最高得分的分片链接受为主分片链，同时从创世（genesis）collation到head的所有collation都是有效的和可用的。注意，这表示主链的重组 *和* 分片链的重组都将影响分片head。
 
-### Fetch candidate heads in reverse sorted order
+### 逆向匹配候选head
 
-To implement the algorithms for watching a shard, and for creating a collation, the first primitive that we need is the following algorithm for fetching candidate heads in highest-to-lowest order. First, suppose the existence of an (impure, stateful) method `getNextLog()`, which gets the most recent `CollationAdded` log in some given shard that has not yet been fetched. This would work by fetching all the logs in recent blocks backwards, starting from the head, and within each block looking in reverse order through the receipts. We define an impure method `fetch_candidate_head` as follows:
+为了实现监视分片的算法和创建collation，我们要做的第一件事就是使用下面的算法来按由高到低的顺序匹配候选head。首先，假设存在一个（非单纯的、有状态的）方法 `getNextLog()` ，它可以取得某个还没有被匹配的给定分片的最新的 `CollationAdded` 日志。这可以通过逆向匹配最新的区块的所有日志来达成，即从head开始，反方向扫描receipt中的每个区块。我们定义一个有状态的方法 `fetch_candidate_head` ：
 
 ```python
 unchecked_logs = []
@@ -221,29 +220,29 @@ def fetch_candidate_head():
     return o
 ```
 
-To re-express in plain language, the idea is to scan backwards through `CollationAdded` logs (for the correct shard), and wait until you get to one where `isNewHead = True`. Return that log first, then return all more recent logs with a score equal to that log with `isNewHead = False`, in order of oldest to most recent. Then go to the previous log with `isNewHead = True` (this is guaranteed to have a score that is 1 lower than the previous NewHead), then go to all more recent collations after it with that score, and so forth.
+用普通的语言重新表述，这里就是反向扫描 `CollationAdded` 日志（对正确的分片），直到获得一个 `isNewHead = True` 的日志。首先返回那个日志，然后用从老到新的顺序返回所有与那个日志分值相同的、 `isNewHead = False` 的所有最新日志。随后到前一个 `isNewHead = True` 的日志（即确保分值会比前一个NewHead低，但比其他人高），再到这个日志之后的所有具有该分值的最新collation，而后到第四个。
 
-The idea is that this algorithm is guaranteed to check potential head candidates in highest-to-lowest sorted order of score, with the second priority being oldest to most recent.
+这就是说这个算法确保了首先按照分值的由高到低、然后按照从老到新的顺序检查潜在的候选head。
 
-For example, suppose that `CollationAdded` logs have hashes and scores as follows:
+例如，假定 `CollationAdded` 日志具有以下哈希和分值：
 
     ... 10 11 12 11 13   14 15 11 12 13   14 12 13 14 15   16 17 18 19 16
 
-Then, `isNewHead` would be assigned as:
+然后， `isNewHead` 将被按如下赋值：
 
     ... T  T  T  F  T    T  T  F  F  F    F  F  F  F  F    T  T  T  T  F
 
-If we number the collations A1..A5, B1..B5, C1..C5 and D1..D5, the precise returning order is:
+如果我们将collation命名为 A1..A5、 B1..B5、 C1..C5 和 D1..D5 ，那么精确的返回顺序将是：
 
     D4 D3 D2 D1 D5 B2 C5 B1 C1 C4 A5 B5 C3 A3 B4 C2 A2 A4 B3 A1
 
-### Watching a shard
+### 监视一个分片
 
-If a client is watching a shard, it should attempt to download and verify any collations in that shard that it can (checking any given collation only if its parent has already been verified). To get the head at any time, keep calling `fetch_candidate_head()` until it returns a collation that has been verified; that collation is the head. This will in normal circumstances return a valid collation immediately or at most after a few tries due to latency or a small-scale attack that creates a few invalid or unavailable collations. Only in the case of a true long-running 51% attack will this algorithm degrade to O(N) time.
+如果一个客户端在监视一个分片，它应该去尝试下载和校验那个分片中的所有collation（检查任何给定的collation，仅当其父collation已经被校验过）。要取得head，需要持续调用 `fetch_candidate_head()` ，直到它返回一个被校验过的collation，也就是head。通常情况下它会立即返回一个有效的collation，或者最多因为网络延迟或小规模的攻击导致生成过几个无效或者不可用的collation，而需要稍微尝试几次。只有在遭遇一个真正长时间运行的51%攻击时，这个算法会恶化到 O(N) 的时间。
 
-### CREATE_COLLATION
+### `CREATE_COLLATION`
 
-This process has three parts. The first part can be called `GUESS_HEAD(shard_id)`, with pseudocode here:
+这个处理由三部分组成，第一部分可以被叫做 `GUESS_HEAD(shard_id)` ，其示意代码如下：
 
 ```python
 # Download a single collation and check if it is valid or invalid (memoized)
@@ -265,11 +264,11 @@ def main(shard_id):
             c = get_parent(c)
 ```
 
-`fetch_and_verify_collation(c)` involves fetching the full data of `c` (including witnesses) from the shard network, and verifying it. The above algorithm is equivalent to "pick the longest valid chain, check validity as far as possible, and if you find it's invalid then switch to the next-highest-scoring valid chain you know about". The algorithm should only stop when the validator runs out of time and it is time to create the collation. Every execution of `fetch_and_verify_collation` should also return a "write set" (see stateless client section above). Save all of these write sets, and combine them together; this is the `recent_trie_nodes_db`.
+`fetch_and_verify_collation(c)` 包含了从分片网络取得 `c` 的所有数据（包括见证人信息）并校验它们的处理。上述算法等价于“选取最长有效链，尽可能的检查有效性，如果其数据无效，则转而处理已知的次长链”。这个算法应该仅当校验器执行超时时才会停止，这就是该创建collation的时候了。每个  `fetch_and_verify_collation` 的执行都应该返回一个“写集合”（参考上文的“无状态客户端”那节）。保存所有这些“写集合”，把它们组合在一起，就构成了  `recent_trie_nodes_db` 。
 
-We can now define `UPDATE_WITNESS(tx, recent_trie_nodes_db)`. While running `GUESS_HEAD`, a node will have received some transactions. When it comes time to (attempt to) include a transaction into a collation, this algorithm will need to be run on the transaction first. Suppose that the transaction has an access list `[A1 ... An]`, and a witness `W`. For each `Ai`, use the current state tree root and get the Merkle branch for `Ai`, using the union of `recent_trie_nodes_db` and `W` as a database. If the original `W` was correct, and the transaction was sent not before the time that the client checked back to, then getting this Merkle branch will always succeed. After including the transaction into a collation, the "write set" from the state change should then also be added into the `recent_trie_nodes_db`.
+我们现在可以来定义 `UPDATE_WITNESS(tx, recent_trie_nodes_db)` 了。在运行  `GUESS_HEAD` 的过程中，某节点会接收到一些交易。当它要把交易（尝试）包含进collation的时候，这个算法需要先运行交易。假定交易有一个访问列表  `[A1 ... An]` 和一个见证人 `W` ，对于每个 `Ai` 使用当前状态树的根取得 `Ai` 的Merkle分支，使用 `recent_trie_nodes_db` 和 `W` 一起作为数据库。如果原始的 `W` 正确，并且交易不是在客户端做这些检查之前就已经发出的话，那么这个取得Merkle分支的操作总是会成功的。在将交易包含进collation之后，状态变动的“写集合”也应该被添加到 `recent_trie_nodes_db` 中。
 
-Next, we have `CREATE_COLLATION`. For illustration, here is full pseudocode for a possible transaction-gathering part of this method.
+下面我们就要来 `CREATE_COLLATION` 了。作为例证，这里是这个方法中可能的、收集交易信息处理的完整示意代码。
 
 ```python
 # Sort by descending order of gasprice
@@ -291,13 +290,13 @@ while len(txpool) > 0:
     txpool.pop(0)
 ```
 
-At the end, there is an additional step, finalizing the collation (to give the collator the reward, which is `COLLATOR_REWARD` ETH). This requires asking the network for a Merkle branch for the collator's account. When the network replies with this, the post-state root after applying the reward, as well as the fees, can be calculated. The collator can then package up the collation, of the form (header, txs, witness), where the witness is the union of the witnesses of all the transactions and the branch for the collator's account.
+最后，有一个额外的步骤，最终确定collation（给collator发放奖励，也就是  `COLLATOR_REWARD` 的ETH）。这需要询问网络以获得collator账户的Merkle分支。当得到网络对此的回应之后，发放奖励之后的“后状态根”（post-state root）就可以被计算出来了。Collator就可以用 (header, txs, witness) 的形式打包这个collation了。这里，见证人（witness）就是所有交易的见证人和collator账户的Merkle分支。
 
-## Protocol changes
+## 协议变动
 
-### Transaction format
+### 交易的格式
 
-The format of a transaction now becomes (note that this includes [account abstraction](https://ethresear.ch/t/tradeoffs-in-account-abstraction-proposals/263/20) and [read/write lists](https://ethresear.ch/t/account-read-write-lists/285/3)):
+交易的格式现在将变为（注意这里包含了 [账户抽象](https://ethresear.ch/t/tradeoffs-in-account-abstraction-proposals/263/20) 和 [读/写列表](https://ethresear.ch/t/account-read-write-lists/285/3) ）：
 
 ```
     [
@@ -312,35 +311,35 @@ The format of a transaction now becomes (note that this includes [account abstra
     ]
 ```
 
-The process for applying a transaction is now as follows:
+完成交易的处理过程也将变为：
 
-* Verify that the `chain_id` and `shard_id` are correct
-* Subtract `start_gas * gasprice` wei from the `target` account
-* Check if the target `account` has code. If not, verify that `sha3(code)[12:] == target`
-* If the target account is empty, execute a contract creation at the `target` with `code` as init code; otherwise skip this step
-* Execute a message with the remaining gas as startgas, the `target` as the to address, 0xff...ff as the sender, 0 value, and the transaction `data` as data
-* If either of the two executions fail, and <= 200000 gas has been consumed (i.e., `start_gas - remaining_gas <= 200000`), the transaction is invalid
-* Otherwise `remaining_gas * gasprice` is refunded, and the fee paid is added to a fee counter (note: fees are NOT immediately added to the coinbase balance; instead, fees are added all at once during block finalization)
+* 校验 `chain_id` 和 `shard_id` 是正确的；
+* 从 `target` 账户中减去 `start_gas * gasprice` wei；
+* 检查目标 `account` 是否有代码，如果没有，校验 `sha3(code)[12:] == target` ；
+* 如果目标账户为空，使用 `code` 作为初始代码，在 `target` 中执行一个合约的创建；否则，跳过这个步骤；
+* 执行一个消息，使用：剩余的气作为startgas， `target` 作为地址，0xff...ff 作为发送者，0作为value，以及当前交易的 `data` 作为data；
+* 如果上述任何一个执行失败，并且消耗了 <= 200000 的气（例如：  `start_gas - remaining_gas <= 200000` ），那么这个交易是无效的；
+* 否则， `remaining_gas * gasprice` 将被退还，已支付的交易费将被添加到一个交易费计数（注意：交易费*不会*被直接加入coinbase余额，而是在区块最终确认时立即添加）。
 
-### Two-layer trie redesign
+### 双层查找树重新设计
 
-The existing account model is replaced with one where there is a single-layer trie, and all account balances, code and storage are incorporated into the trie. Specifically, the mapping is:
+现存的账户模型将被替换为：在一个单层查找树中收录进所有账户的余额、代码和存储。具体来讲，这个映射为：
 
-* Balance of account X: `sha3(X) ++ 0x00`
-* Code of account X: `sha3(X) ++ 0x01`
-* Storage key K of account X: `sha3(X) ++ 0x02 ++ K`
+* 账户X的余额： `sha3(X) ++ 0x00`
+* 账户X的代码： `sha3(X) ++ 0x01`
+* 账户X的存储键值K： `sha3(X) ++ 0x02 ++ K`
 
-See also ethresearch thread on [A two-layer account trie inside a single-layer trie](https://ethresear.ch/t/a-two-layer-account-trie-inside-a-single-layer-trie/210)
+请参考ethresearch上的帖子 [单层查找树中的双层账户查找树](https://ethresear.ch/t/a-two-layer-account-trie-inside-a-single-layer-trie/210) 。
 
-Additionally, the trie is now a new binary trie design: https://github.com/ethereum/research/tree/master/trie_research
+此外，这个查找树现在有了一个新的二进制查找树设计： https://github.com/ethereum/research/tree/master/trie_research 。
 
-### Access list
+### 访问列表
 
-The access list for an account looks as follows:
+一个账号的访问列表看起来大概像这样：
 
     [[address, prefix1, prefix2...], [address, prefix1, prefix2...], ...]
 
-This basically means "the transaction can access the balance and code for the given accounts, as well as any storage key provided that at least one of the prefixes listed with the account is a prefix of the storage key". One can translate it into "prefix list form", which essentially is a list of prefixes of the underlying storage trie (see above section):
+从根本上说，这意味着：“这个交易可以访问这里给定的所有账户的余额和代码，并且账户列表中给出的每个账户的前缀中至少有一个是该账户存储的一个键的前缀”。我们可以将其转换为“前缀列表格式”，基本上就是一个内部存储查找树的前缀列表（参考前面的章节）：
 
 ```python
 def to_prefix_list_form(access_list):
@@ -354,23 +353,32 @@ def to_prefix_list_form(access_list):
     return o
 ```
 
-One can compute the witness for a transaction by taking the transaction's access list, converting it into prefix list form, then running the algorithm `get_witness_for_prefix` for each item in the prefix list form, and taking the union of these results.
+我们可以通过取得交易的访问列表，将其变换为前缀列表格式，然后对前缀列表中的每个前缀执行 `get_witness_for_prefix` ，并将这些调用结果组成一个集合；以此来计算某个交易见证人。
 
-`get_witness_for_prefix` returns a minimal set of trie nodes that are sufficient to access any key which starts with the given prefix. See implementation here: https://github.com/ethereum/research/blob/b0de8d352f6236c9fa2244fed871546fabb016d1/trie_research/new_bintrie.py#L250
+`get_witness_for_prefix` 会返回查找树节点中可以访问以指定前缀开始的所有键值的一个最小集合。参考这里的实现： https://github.com/ethereum/research/blob/b0de8d352f6236c9fa2244fed871546fabb016d1/trie_research/new_bintrie.py#L250 。
 
-In the EVM, any attempt to access (either by calling or SLOAD'ing or via an opcode such as `BALANCE` or `EXTCODECOPY`) an account that is outside the access list will lead to the EVM instance that made the access attempt immediately throwing an exception.
+在 EVM 中，任何尝试对访问列表以外的账户的访问（直接调用、SLOAD或者通过类似 `BALANCE` 或 `EXTCODECOPY` 的opcode的操作）都会导致运行这种代码的EVM实例抛出异常。
 
-See also ethresearch thread on [Account read/write lists](https://ethresear.ch/t/account-read-write-lists/285).
+请参考 ethresearch 上的帖子 [账户读/写列表](https://ethresear.ch/t/account-read-write-lists/285) 。
 
-### Gas costs
+### Gas 的消耗
 
-To be finalized.
+待定。
 
-## Subsequent phases
+## 后续的阶段
 
-This allows for a quick and dirty form of medium-security proof of stake sharding in a way that achieves quadratic scaling through separation of concerns between block proposers and collators, and thereby increases throughput by ~100x without too many changes to the protocol or software architecture. This is intended to serve as the first phase in a multi-phase plan to fully roll out quadratic sharding, the latter phases of which are described below.
+通过分离区块proposer和collator，我们实现了二次方扩展，这是一种快速、不彻底的中等安全权益证明分片，以此在不对协议或软件架构做太多更改的情况下增加了大约100倍的吞吐量。这也被用来作为一个完整的二次方分片多阶段计划的第一阶段，后续阶段大致如下：
 
-* **Phase 2 (two-way pegging)**: see section on `USED_RECEIPT_STORE`, still to be written
-* **Phase 3, option a**: require collation headers to be added in as uncles instead of as transactions
-* **Phase 3, option b**: require collation headers to be added in an array, where item `i` in the array must be either a collation header of shard `i` or the empty string, and where the extra data must be the hash of this array (soft fork)
-* **Phase 4 (tight coupling)**: blocks are no longer valid if they point to invalid or unavailable collations. Add data availability proofs.
+* **第二阶段（two-way pegging，即双向限定）** ：参考 `USED_RECEIPT_STORE` 章节，仍在撰写；
+* **第三阶段，选项a** ：将collation header作为uncle加入，而不是交易；
+* **第三阶段，选项b** ：将collation header加入一个数组，数组中的元素 `i` 必须为分片 `i` 的collation header或者空字符串，并且额外的数据必须为这个数组的哈希（软分叉）；
+* **第四阶段（tight coupling，即紧耦合）** ：如果区块指向无效或不可用的collation，那么区块也将变为无效；增加数据可用性证明。
+
+---------------------------------
+
+#### 翻译后记
+
+本文最初是我应以太坊中文社区（Ethfans.org）之邀做的翻译稿，译文于 2018/1/14 首发于【以太坊爱好者】公众号，文章链接：https://mp.weixin.qq.com/s/-VzAL5aR9YFlXHkBG9kkCw。其对应的英文原文最后更新于 2018/1/5，github commit 版本：0d0c74d41dec9ca55d1ff077400229ad524ce10a。
+
+以上正文是我根据最新版原文修订之后的版本，对应的 github commit 版本：8a8fbe298e0490e3acbe20f496fb2aeba59b8a41，更新时间 2018/5/16。
+
