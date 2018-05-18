@@ -4,11 +4,11 @@
 
 假设用变量 `c` 来表示一个节点的有效计算能力，那么在一个普通的区块链里，交易容量就被限定为 O(c)，因为每个节点都必须处理所有的交易。二次方分片的目的，就是通过一种双层的设计来增加交易容量。在第一层中是不需要硬分叉的，主链就保持原样。不过，一种被称为**校验器管理和约**（validator manager contract，VMC）的合约需要被发布到主链上，它用来维持分片系统。这个合约中会存在 O(c) 个 **分片** （目前为100），每个分片都像是个独立的“银河”：它具有自己的账户空间，交易需要指定它们自己应该被发布到哪个分片中，并且分片间的通信是受限的（事实上，在第一阶段，不存在这种通信能力）。
 
-分片运行在一个普通的符合最长链规则的权益证明系统中，权益数据将保存在主链上（具体来说，是在VMC中）。所有分片共享一个通用验证器池，这也意味着：任何通过VMC注册的验证器，理论上都可以在任意时间被授权来在任意分片上创建区块。每个分片会有一个 O(c) 的区块大小/气上限（block size/gas limit），这样，系统的整体容量就变成了 O(c^2) 。
+分片运行在一个普通的符合最长链规则的权益证明系统中，权益数据将保存在主链上（具体来说，是在 VMC 中）。所有分片共享一个通用验证器池，这也意味着：任何通过VMC注册的验证器，理论上都可以在任意时间被授权来在任意分片上创建区块。每个分片会有一个 O(c) 的区块大小/气上限（block size/gas limit），这样，系统的整体容量就变成了 O(c^2) 。
 
-分片系统中的大多数用户都会运行两部分程序。(i) 一个在主链上的全节点（需要 O(c) 资源）或轻量节点（需要 O(log(c)) 资源）。 (ii) 一个通过RPC与主链交互的“分片客户端”（由于这个客户端同样运行在当前用户的计算机中，所以它被认为是可信的）；它也可以作为任意分片的轻客户端、作为特定分片的全客户端（用户需要指定他们正在“监视”某个特定的分片），或者作为一个验证器节点。在这些情况下，一个分片客户端的存储和计算需求也将不会超过 O(c)  （除非用户指定他们正在监视 _每个_ 分片；区块浏览器和大型的交易所可能会这么做）。
+分片系统中的大多数用户都会运行两部分程序。(i) 一个在主链上的全节点（需要 O(c) 资源）或轻量节点（需要 O(log(c)) 资源）。 (ii) 一个通过RPC与主链交互的“分片客户端”（由于这个客户端同样运行在当前用户的计算机中，所以它被认为是可信的）；它也可以作为任意分片的轻客户端、作为特定分片的全客户端（用户需要指定他们正在“监视”某个特定的分片），或者作为一个验证器节点。在这些情况下，一个分片客户端的存储和计算需求也将不会超过 O(c) （除非用户指定他们正在监视 _每个_ 分片；区块浏览器和大型的交易所可能会这么做）。
 
-在本文中， `Collation` （校对块）被用来与 `Block` （区块）相区别，因为： (i) 它们是不同的RLP（Recursive Length Prefix）对象：交易是第0层的对象，collation是用来打包交易的第一层的对象，而block则是用来打包collation（header）的第二层的对象； (ii) 在分片的情景中这更加清晰。通常， `Collation` 必须由 `CollationHeader` （校对块头）和 `TransactionList` （交易列表）组成； `Collation` 的详细格式和 `Witness` （见证人）会在 **无状态客户端** 那节定义。 `Collator` （校对器）是由主链上 **验证器管理合约** 的 `getEligibleProposer` 函数所生成的示例。算法会在随后的章节中介绍。
+在本文中，`Collation`（校对块）被用来与 `Block`（区块）相区别，因为： (i) 它们是不同的 RLP（Recursive Length Prefix）对象：交易是第 0 层的对象，collation 是用来打包交易的第一层的对象，而 block 则是用来打包 collation（header）的第二层的对象； (ii) 在分片的情景中这更加清晰。通常，`Collation` 必须由 `CollationHeader`（校对块头）和 `TransactionList`（交易列表）组成；`Collation` 的详细格式和 `Witness`（见证人）会在 **无状态客户端** 那节定义。`Collator`（校对器）是由主链上 **验证器管理合约** 的 `getEligibleProposer` 函数所生成的示例。算法会在随后的章节中介绍。
 
 | Main Chain                                 | Shard Chain            |
 |--------------------------------------------|------------------------|
@@ -29,13 +29,13 @@
 
 ### 验证器管理合约（Validator Manager Contract，VMC）
 
-我们假定VMC存在于地址 `VALIDATOR_MANAGER_ADDRESS` 上（在已有的“主分片”上），它支持下列函数：
+我们假定 VMC 存在于地址 `VALIDATOR_MANAGER_ADDRESS` 上（在已有的“主分片”上），它支持下列函数：
 
-- `deposit(address validationCodeAddr, address returnAddr) returns uint256` ：添加一个验证器到验证器集合中，验证器的大小就是函数调用时的 `msg.value` （比如存入的以太币数量）。这个函数会返回验证器的索引号。 `validationCodeAddr` 用来存储验证代码的地址，这里的“验证代码”指一个单纯的函数，这个函数需要一个32字节的哈希值和一个签名作为输入，如果签名与哈希值匹配则返回1，否则返回0。如果validationCodeAddr这个地址存储的代码不能通过 [单纯性检查合约] 的单纯性验证，deposit函数就会失败。这里的“单纯性验证”包含了对“验证代码”的实际的静态检查以确保它的输出仅仅依赖于它的输入，而不会受任何状态的影响；它的代码没有使用任何会影响状态的操作码（opcode）；并且它的运行也不会导致状态的变动（比如，来防止攻击者创建这样的恶意“验证代码”：当用它校验投票表决时返回true，但当验证器行为不端、甚至已经有行为不端者的证据被提供给这个函数时，它又返回false）。
-- `withdraw(uint256 validatorIndex, bytes sig) returns bool` ：校验签名的正确性（例如，一个以0值和 `sha3("withdraw") + sig` 作为数据，附带了200000个气的，对 `validationCodeAddr` 的调用返回1），如果正确，它会将验证器从验证器集合中移除，并退还存入的以太币。
-- `getEligibleProposer(uint256 shardId, uint256 period) returns address` ：使用一个区块哈希（block hash）作为种子基于预设的算法从验证器集合中选择一个签名者（signer）。验证器被选中几率应该与其存款数量成正比。这个函数应该可以返回一个当前周期内的值或者以 `LOOKAHEAD_PERIODS` 为上限的任意未来周期内的值。
-- `addHeader(bytes header) returns bool` ：尝试处理一个collation header，成功时返回true，失败时返回false。
-- `getShardHead(uint256 shardId) returns bytes32` ：返回验证器管理合约内由参数所指定的分片的header哈希。
+-   `deposit() returns uint256`：添加一个验证器到验证器集合中，验证器的大小就是函数调用时的 `msg.value` （比如存入的以太币数量）。这个函数会返回验证器的索引号。 `validationCodeAddr` 用来存储验证代码的地址，这里的“验证代码”指一个单纯的函数，这个函数需要一个32字节的哈希值和一个签名作为输入，如果签名与哈希值匹配则返回1，否则返回0。如果validationCodeAddr这个地址存储的代码不能通过 [单纯性检查合约] 的单纯性验证，deposit函数就会失败。这里的“单纯性验证”包含了对“验证代码”的实际的静态检查以确保它的输出仅仅依赖于它的输入，而不会受任何状态的影响；它的代码没有使用任何会影响状态的操作码（opcode）；并且它的运行也不会导致状态的变动（比如，来防止攻击者创建这样的恶意“验证代码”：当用它校验投票表决时返回true，但当验证器行为不端、甚至已经有行为不端者的证据被提供给这个函数时，它又返回false）。
+-   `withdraw(uint256 validator_index) returns bool`：校验签名的正确性（例如，一个以0值和 `sha3("withdraw") + sig` 作为数据，附带了200000个气的，对 `validationCodeAddr` 的调用返回1），如果正确，它会将验证器从验证器集合中移除，并退还存入的以太币。
+-   `get_eligible_proposer(uint256 shard_id, uint256 period) returns address`：使用一个区块哈希（block hash）作为种子基于预设的算法从验证器集合中选择一个签名者（signer）。验证器被选中几率应该与其存款数量成正比。这个函数应该可以返回一个当前周期内的值或者以 `LOOKAHEAD_PERIODS` 为上限的任意未来周期内的值。
+-   `add_header(uint256 shard_id, uint256 expected_period_number, bytes32 period_start_prevhash, bytes32 parent_hash, bytes32 transaction_root, address coinbase, bytes32 state_root, bytes32 receipt_root, uint256 number) returns bool`：尝试处理一个collation header，成功时返回true，失败时返回false。
+-   `get_shard_head(uint256 shard_id) returns bytes32`：返回验证器管理合约内由参数所指定的分片的header哈希。
 
 这里也有一个日志类型：
 
@@ -378,7 +378,7 @@ def to_prefix_list_form(access_list):
 
 #### 翻译后记
 
-本文最初是我应以太坊中文社区（Ethfans.org）之邀做的翻译稿，译文于 2018/1/14 首发于【以太坊爱好者】公众号，文章链接：https://mp.weixin.qq.com/s/-VzAL5aR9YFlXHkBG9kkCw。其对应的英文原文最后更新于 2018/1/5，github commit 版本：0d0c74d41dec9ca55d1ff077400229ad524ce10a。
+本文最初是我应以太坊中文社区（Ethfans.org）之邀做的翻译稿，译文于 2018/1/14 首发于【以太坊爱好者】公众号：[干货 | V神·以太坊上的分片](https://mp.weixin.qq.com/s/-VzAL5aR9YFlXHkBG9kkCw) 。此版本对应的原文 github commit 版本：0d0c74d41dec9ca55d1ff077400229ad524ce10a，更新时间 2018/1/5。
 
-以上正文是我根据最新版原文修订之后的版本，对应的 github commit 版本：8a8fbe298e0490e3acbe20f496fb2aeba59b8a41，更新时间 2018/5/16。
+以上正文是我根据最新版原文修订之后的版本，对应的原文 github commit 版本：8a8fbe298e0490e3acbe20f496fb2aeba59b8a41，更新时间 2018/5/16。
 
