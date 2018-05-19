@@ -2,13 +2,13 @@
 
 本文的目的是为那些希望理解分片建议详情，乃至去实现它的朋友提供一份相对完整的细节说明和介绍。本文仅作为二次方分片（quadratic sharding）的第一阶段的描述；第二、三、四阶段目前不在讨论范围，同样，超级二次方分片（super-quadratic sharding）*（“Ethereum 3.0”）* 也不在讨论范围。
 
-假设用变量 `c` 来表示一个节点的有效计算能力，那么在一个普通的区块链里，交易容量就被限定为 O(c)，因为每个节点都必须处理所有的交易。二次方分片的目的，就是通过一种双层的设计来增加交易容量。第一层不需要硬分叉，主链就保持原样。不过，一种被称为 **校验器管理和约** （validator manager contract，VMC）的合约需要被发布到主链上，它用来维持分片系统。这个合约中会存在 O(c) 个 **分片** （目前为 100），每个分片都像是个独立的“银河”：它具有自己的账户空间，交易需要指定它们自己应该被发布到哪个分片中，并且分片间的通信是受限的（事实上，在第一阶段，不存在这种通信能力）。
+假设用变量 `c` 来表示一个节点的有效计算能力，那么在一个普通的区块链里，交易容量就被限定为 O(c)，因为每个节点都必须处理所有的交易。二次方分片的目的，就是通过一种双层的设计来增加交易容量。第一层不需要硬分叉，主链就保持原样。不过，一个叫做 **校验器管理和约** （validator manager contract，VMC）的合约需要被发布到主链上，它用来维持分片系统。这个合约中会存在 O(c) 个 **分片** （目前为 100），每个分片都像是个独立的“银河”：它具有自己的账户空间，交易需要指定它们自己应该被发布到哪个分片中，并且分片间的通信是受限的（事实上，在第一阶段，不存在这种通信能力）。
 
 分片运行在一个普通的符合最长链规则的权益证明系统中，权益数据将保存在主链上（具体来说，是在 VMC 中）。所有分片共享一个通用验证器池，这也意味着：任何通过 VMC 注册的验证器，理论上都可以在任意时间被授权来在任意分片上创建区块。每个分片会有一个 O(c) 的区块大小 / gas 上限（block size/gas limit），这样，系统的整体容量就变成了 O(c^2) 。
 
 分片系统中的大多数用户都会运行两部分程序。(i) 一个在主链上的全节点（需要 O(c) 资源）或轻量节点（需要 O(log(c)) 资源）。 (ii) 一个通过 RPC 与主链交互的“分片客户端”（由于这个客户端同样运行在当前用户的计算机中，所以它被认为是可信的）；它也可以作为任意分片的轻客户端、作为特定分片的全客户端（用户需要指定他们正在“监视”某个特定的分片），或者作为一个验证器节点。在这些情况下，一个分片客户端的存储和计算需求也将不会超过 O(c) （除非用户指定他们正在监视 _每个_ 分片；区块浏览器和大型的交易所可能会这么做）。
 
-在本文中，术语 `Collation`（校对块）被用来与 `Block`（区块）相区别，因为： (i) 它们是不同的 RLP（Recursive Length Prefix）对象：交易是第 0 层的对象，collation 是用来打包交易的第一层的对象，而 block 则是用来打包 collation（header）的第二层的对象； (ii) 在分片的情景中这更加清晰。通常，`Collation` 必须由 `CollationHeader`（校对块头）和 `TransactionList`（交易列表）组成；`Collation` 的详细格式和 `Witness`（见证人）会在 **无状态客户端** 那节定义。`Collator`（校对器）是由主链上 **验证器管理合约** 的 `getEligibleProposer` 函数所生成的示例。算法会在随后的章节中介绍。
+在本文中，术语 `Collation` 被用来与 `Block`（区块）相区别，因为： (i) 它们是不同的 RLP（Recursive Length Prefix）对象：交易是第 0 层的对象，collation 是用来打包交易的第一层的对象，而 block 则是用来打包 collation（header）的第二层的对象； (ii) 在分片的情景中这更加清晰。通常，`Collation` 必须由 `CollationHeader` 和 `TransactionList`（交易列表）组成；`Collation` 的详细格式和 `Witness`（见证人）会在 **无状态客户端** 那节定义。`Collator`（即用来打包 transaction 生成 collation 的某个地址，译者注）是由主链上 **验证器管理合约** 的 `getEligibleProposer` 函数所生成的示例。算法会在随后的章节中介绍。
 
 | Main Chain                                 | Shard Chain            |
 |--------------------------------------------|------------------------|
@@ -59,7 +59,7 @@
 
 注意：因为 `coinbase` 和 `number` 在 vyper 语言中是保留字，所以它们被重命名为 `collation_coinbase` 和 `collation_number`。
 
-### 校对块头（Collation Header）
+### Collation Header
 
 我们首先以一个有下列内容的 RLP 列表来定义一个“collation header”：
 
@@ -92,7 +92,7 @@
 - `expected_period_number` 与当前周期号相等（即 `floor(block.number / PERIOD_LENGTH)`）
 - 在相同的分片中，一个具有 `parent_hash` 的 collation 已经被接受；（即当前 collation 的父 collation 已经被接受，译者注）
 - 在相同分片中，当前周期内还没有一个同样的 collation 被提交；（也就是检查要添加的 collation 是否已经添加过了，译者注）
-- `add_header` 函数调用者的地址与 `get_eligible_proposer(shard_id, expected_period_number)` 所返回的地址相同。(即要添加这个 collation 的 proposer 是否与当前周期内被选中来维护这个分片的 proposer 一致，译者注)
+- `add_header` 函数调用者的地址与 `get_eligible_proposer(shard_id, expected_period_number)` 所返回的地址相同。(即判断要添加这个 collation 的 proposer 是否是给定分片、给定周期的合法记账人，译者注)
 
 当满足以下条件时， **collation** 有效： (i) 它的“collation header”有效； (ii) 在 `parent_hash` 的 `state_root` 上执行 collation 的结果为给定的 `state_root` 和 `receipt_root`；并且 (iii) 总共使用的 gas 小于等于 `COLLATION_GASLIMIT` 。
 
@@ -324,11 +324,11 @@ while len(txpool) > 0:
 
 ### 双层树（two-layer trie）重新设计
 
-现存的账户模型将被替换为：在一个单层查找树中收录进所有账户的余额、代码和存储。具体来讲，这个映射为：
+现存的账户模型将被替换为：在一个单层树中收录进所有账户的余额、代码和存储。具体来讲，这个映射为：
 
-* 账户X的余额：`sha3(X) ++ 0x00`
-* 账户X的代码：`sha3(X) ++ 0x01`
-* 账户X的存储键值K：`sha3(X) ++ 0x02 ++ K`
+* 账户 X 的余额：`sha3(X) ++ 0x00`
+* 账户 X 的代码：`sha3(X) ++ 0x01`
+* 账户 X 的存储键值 K：`sha3(X) ++ 0x02 ++ K`
 
 请参考 ethresearch 上的帖子 [单层树中的双层账户树](https://ethresear.ch/t/a-two-layer-account-trie-inside-a-single-layer-trie/210) 。
 
@@ -356,7 +356,7 @@ def to_prefix_list_form(access_list):
 
 我们可以通过取得交易的访问列表，将其变换为前缀列表格式，然后对前缀列表中的每个前缀执行 `get_witness_for_prefix`，并将这些调用结果组成一个集合；以此来计算某个交易见证人。
 
-`get_witness_for_prefix` 会返回查找树节点中可以访问以指定前缀开始的所有键值的一个最小集合。参考这里的实现： https://github.com/ethereum/research/blob/b0de8d352f6236c9fa2244fed871546fabb016d1/trie_research/new_bintrie.py#L250 。
+`get_witness_for_prefix` 会返回树节点中可以访问以指定前缀开始的所有键值的一个最小集合。参考这里的实现： https://github.com/ethereum/research/blob/b0de8d352f6236c9fa2244fed871546fabb016d1/trie_research/new_bintrie.py#L250 。
 
 在 EVM 中，任何尝试对访问列表以外的账户的访问（直接调用、SLOAD 或者通过类似 `BALANCE` 或 `EXTCODECOPY` 的 opcode 的操作）都会导致运行这种代码的 EVM 实例抛出异常。
 
